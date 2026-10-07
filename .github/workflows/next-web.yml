@@ -1,0 +1,115 @@
+# The four Next.js repos: types, lint, unit tests and a production build. Lifted from
+# minty-web's day-one workflow.
+#
+# Browser tests are NOT here, with one exception: daily-minty-landing-page is the only repo whose
+# playwright.config.ts starts its own server and needs no backend and no database, so it passes
+# e2e: true. Every other repo's specs need the whole stack and run from stack-e2e.yml.
+#
+# Script names are explicit inputs rather than `npm run --if-present`: a check that silently
+# skips because a script was renamed is worse than no check.
+#
+# Callers pin a tag, never @main:
+#   uses: minty-oliveandvine/.github/.github/workflows/next-web.yml@v1
+name: next-web
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: "No repo pins `engines`, so this is the one place Node is chosen."
+        type: string
+        default: "22"
+      typecheck-script:
+        description: "`typecheck` everywhere except the landing page, which calls it `type-check`."
+        type: string
+        default: "typecheck"
+      unit-tests:
+        description: "false for daily-minty-landing-page, which has no unit tests and no `test` script."
+        type: boolean
+        default: true
+      lint:
+        description: >-
+          false only where the repo's lint debt would make CI permanently red. A red run blocks
+          nothing on merge today, but Render deploys on "checks pass", so a repo that can never be
+          green cannot deploy. Every `false` here is a hole to close, not a setting.
+        type: boolean
+        default: true
+      extra-scripts:
+        description: "Further npm scripts to run, one per line (minty-onboarding-web: check:routes)."
+        type: string
+        default: ""
+      build-env:
+        description: "KEY=VALUE lines that `next build` needs (the repo's canonical *_URL names)."
+        type: string
+        default: ""
+      e2e:
+        description: "Run `npm run test:e2e`. Only true where the Playwright config starts its own server."
+        type: boolean
+        default: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - run: npm ci
+
+      # Read from a file, not a pipe: a `while` loop in a pipeline runs in a subshell, where
+      # `exit 1` would be swallowed and a malformed line would be dropped silently.
+      - name: the build environment
+        if: inputs.build-env != ''
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
+        run: |
+          printf '%s\n' "$BUILD_ENV" > "$RUNNER_TEMP/build-env"
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            case "$line" in
+              *=*) printf '%s\n' "$line" >> "$GITHUB_ENV" ;;
+              *)
+                echo "::error::build-env holds a line that is not KEY=VALUE: $line"
+                exit 1
+                ;;
+            esac
+          done < "$RUNNER_TEMP/build-env"
+
+      - name: typecheck
+        env:
+          SCRIPT: ${{ inputs.typecheck-script }}
+        run: npm run "$SCRIPT"
+
+      - name: lint
+        if: inputs.lint
+        run: npm run lint
+
+      - name: unit tests
+        if: inputs.unit-tests
+        run: npm test
+
+      - name: extra checks
+        if: inputs.extra-scripts != ''
+        env:
+          EXTRA_SCRIPTS: ${{ inputs.extra-scripts }}
+        run: |
+          printf '%s\n' "$EXTRA_SCRIPTS" > "$RUNNER_TEMP/extra-scripts"
+          while IFS= read -r script; do
+            [ -z "$script" ] && continue
+            npm run "$script"
+          done < "$RUNNER_TEMP/extra-scripts"
+
+      - name: build
+        run: npm run build
+
+      - name: the browser
+        if: inputs.e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: e2e
+        if: inputs.e2e
+        run: npm run test:e2e

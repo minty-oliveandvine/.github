@@ -1,0 +1,99 @@
+# The three Django APIs: ruff, then pytest twice - once on SQLite (the service's own logic),
+# once on a Postgres built from Minty's docs/schema/01_schema_rebased.sql (do the mirrors still
+# match the real schema?). Lifted from minty-subscription-api's day-one workflow, which is where
+# both passes were worked out.
+#
+# The repos' conftest.py files are byte-identical: with MINTY_TEST_PG_URI set they load
+# Minty/tests/pg_harness.py by path from MINTY_REPO, so Minty is checked out beside the caller.
+#
+# Callers pin a tag, never @main:
+#   uses: minty-oliveandvine/.github/.github/workflows/python-api.yml@v1
+name: python-api
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: "3.13 for minty-subscription-api; 3.11 for payment-request and onboarding."
+        type: string
+        required: true
+      schema-name-test:
+        description: >-
+          A pytest path run once more against ?schema=pettycash_alt, proving the schema name is a
+          setting and not a literal. Empty skips the step.
+        type: string
+        default: ""
+    secrets:
+      MINTY_READ_TOKEN:
+        description: "Fine-grained PAT with read access to the contents of minty-oliveandvine/Minty."
+        required: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      # An empty MINTY_READ_TOKEN fails the checkout below as an opaque git auth error - the
+      # only tell is that checkout stops echoing `token: ***` in its inputs. Say it plainly
+      # here instead, so the next expiry reads as what it is.
+      - name: the Minty read token is set
+        env:
+          MINTY_READ_TOKEN: ${{ secrets.MINTY_READ_TOKEN }}
+        run: |
+          if [ -z "$MINTY_READ_TOKEN" ]; then
+            echo "::error::MINTY_READ_TOKEN is empty or unset, so the private Minty checkout cannot authenticate."
+            echo "Add it under Settings > Secrets and variables > Actions: a fine-grained PAT with read access to minty-oliveandvine/Minty."
+            exit 1
+          fi
+
+      # The Postgres test mode loads Minty/tests/pg_harness.py and builds the schema from
+      # Minty/docs/schema/01_schema_rebased.sql - so Minty is checked out beside this repo.
+      - uses: actions/checkout@v5
+        with:
+          repository: minty-oliveandvine/Minty
+          token: ${{ secrets.MINTY_READ_TOKEN }}
+          path: Minty
+          sparse-checkout: |
+            tests/pg_harness.py
+            docs/schema/01_schema_rebased.sql
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: ruff
+        run: ruff check .
+
+      - name: pytest (SQLite)
+        run: pytest -q
+
+      - name: pytest (Postgres from 01_schema_rebased.sql)
+        env:
+          MINTY_TEST_PG_URI: postgresql://postgres:postgres@localhost:5432/postgres
+          # A database of its own per run, never the shared default name.
+          MINTY_TEST_PG_DBNAME: ci_${{ github.run_id }}_${{ github.run_attempt }}
+          MINTY_REPO: ${{ github.workspace }}/Minty
+          PG_BIN: /usr/bin
+        run: |
+          sudo apt-get install -y --no-install-recommends postgresql-client
+          pytest -q
+
+      - name: the schema name is a setting, not a literal
+        if: inputs.schema-name-test != ''
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres?schema=pettycash_alt
+          SCHEMA_NAME_TEST: ${{ inputs.schema-name-test }}
+        run: pytest -q "$SCHEMA_NAME_TEST"

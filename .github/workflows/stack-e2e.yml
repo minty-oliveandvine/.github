@@ -1,0 +1,275 @@
+# The whole system, then one repo's browser specs against it. This is the job the modernisation
+# plan wanted a `minty-e2e` repo for: the cross-service journeys already live in the app repos
+# (minty-web's 04_live_api starts a real trial and checks Flask's gate opened; Minty's
+# 04_xero_publish publishes for real), so what was missing was never a repo - it was something
+# that stands the stack up and runs them.
+#
+# Nothing here is new machinery. docker/stack already builds all seven repos from sibling
+# checkouts, docs/schema/01_schema_rebased.sql already is the cold start (the Alembic chain
+# cannot build from empty - docker/stack/README.md section 3b), and scripts/e2e_seed.py already
+# creates the identities every suite reads and prints them as an env block.
+#
+# NO PRODUCTION SECRET IS NEEDED. SECRET_KEY is generated per run (compose shares the one value
+# across services, which is all that matters), S3_URL falls back to compose's dummy, Stripe and
+# SMTP stay unset, and E2E_XERO stays off - so nothing reaches a real Xero org or a real mailbox.
+# The only secret is a read-only token for the private checkouts.
+#
+# Called from Minty (private, and the repo that owns the stack, the schema and the seed):
+#   uses: minty-oliveandvine/.github/.github/workflows/stack-e2e.yml@v1
+name: stack-e2e
+
+on:
+  workflow_call:
+    inputs:
+      suite:
+        description: "Whose specs to run: Minty, minty-web or minty-payment-request-web."
+        type: string
+        required: true
+      ref:
+        description: "The branch of the OTHER six repos. The caller's own ref is used for Minty."
+        type: string
+        default: development
+      spec:
+        description: "Optional filter passed through to Playwright (e.g. e2e/01_login.spec.ts)."
+        type: string
+        default: ""
+    secrets:
+      STACK_READ_TOKEN:
+        description: >-
+          Fine-grained PAT, read-only on contents, for the four private repos
+          (Minty, minty-subscription-api, minty-payment-request-api, minty-onboarding-api).
+        required: true
+
+jobs:
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # docker/stack's *_PATH defaults assume the repos are siblings, so the checkouts below
+      # reproduce the C:\Github layout and no path override is needed.
+      STACK: ${{ github.workspace }}/Minty/docker/stack
+      SUITE: ${{ inputs.suite }}
+      SPEC: ${{ inputs.spec }}
+      PGUSER_: minty_ref_user
+      PGDB_: minty_ref
+
+    steps:
+      - name: the suite is one this job can seed
+        run: |
+          case "$SUITE" in
+            Minty|minty-web|minty-payment-request-web) ;;
+            minty-onboarding-web)
+              echo "::error::minty-onboarding-web's walk/resume specs need a disposable entity in"
+              echo "::error::onboarding status (E2E_ENTITY_ID), which scripts/e2e_seed.py does not"
+              echo "::error::create yet. Add that to the seed before asking for this suite."
+              exit 1
+              ;;
+            *)
+              echo "::error::unknown suite '$SUITE'. One of: Minty, minty-web, minty-payment-request-web."
+              exit 1
+              ;;
+          esac
+
+      - name: Minty (the caller's own ref)
+        uses: actions/checkout@v5
+        with:
+          path: Minty
+
+      - name: minty-subscription-api
+        uses: actions/checkout@v5
+        with:
+          repository: minty-oliveandvine/minty-subscription-api
+          token: ${{ secrets.STACK_READ_TOKEN }}
+          ref: ${{ inputs.ref }}
+          path: minty-subscription-api
+
+      - name: minty-payment-request-api
+        uses: actions/checkout@v5
+        with:
+          repository: minty-oliveandvine/minty-payment-request-api
+          token: ${{ secrets.STACK_READ_TOKEN }}
+          ref: ${{ inputs.ref }}
+          path: minty-payment-request-api
+
+      - name: minty-onboarding-api
+        uses: actions/checkout@v5
+        with:
+          repository: minty-oliveandvine/minty-onboarding-api
+          token: ${{ secrets.STACK_READ_TOKEN }}
+          ref: ${{ inputs.ref }}
+          path: minty-onboarding-api
+
+      - name: minty-web
+        uses: actions/checkout@v5
+        with:
+          repository: minty-oliveandvine/minty-web
+          ref: ${{ inputs.ref }}
+          path: minty-web
+
+      - name: minty-payment-request-web
+        uses: actions/checkout@v5
+        with:
+          repository: minty-oliveandvine/minty-payment-request-web
+          ref: ${{ inputs.ref }}
+          path: minty-payment-request-web
+
+      - name: minty-onboarding-web
+        uses: actions/checkout@v5
+        with:
+          repository: minty-oliveandvine/minty-onboarding-web
+          ref: ${{ inputs.ref }}
+          path: minty-onboarding-web
+
+      # Both values are per-run throwaways. SECRET_KEY only has to be the SAME everywhere
+      # (Flask mints the hand-off JWTs, the Django APIs verify them with it), never the real one.
+      - name: the stack's settings
+        run: |
+          {
+            echo "POSTGRES_DB=$PGDB_"
+            echo "POSTGRES_USER=$PGUSER_"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "DB_SCHEMA=pettycashv3"
+            echo "SECRET_KEY=$(openssl rand -hex 32)"
+            echo "APP_ENV=development"
+            echo "ALLOWED_HOSTS=*"
+            # The Alembic chain cannot build from empty; the schema file is loaded below instead.
+            echo "RUN_MIGRATIONS=false"
+            echo "SUBSCRIPTION_SCHEDULER_ENABLED=0"
+          } > "$STACK/.env"
+          echo "E2E_MINTY_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+
+      # -f docker-compose.yml on every call, so the dev override (bind mounts and auto-reloading
+      # dev servers) is skipped and the backends run under gunicorn, as the override's own
+      # header documents.
+      - name: the database
+        working-directory: ${{ env.STACK }}
+        run: docker compose -f docker-compose.yml up -d --wait db
+
+      - name: the schema, from 01_schema_rebased.sql
+        working-directory: ${{ env.STACK }}
+        run: |
+          docker compose -f docker-compose.yml exec -T db \
+            psql -v ON_ERROR_STOP=1 -U "$PGUSER_" -d "$PGDB_" < ../../docs/schema/01_schema_rebased.sql
+
+          # The file creates `pettycash_test` (tests/pg_harness.py, BUILT_SCHEMA) while the models
+          # and every service read `pettycashv3`, so the build ends with the same rename the test
+          # harness and the cutover rehearsal end with. Checked rather than assumed: if the file
+          # ever creates a different name, this says so instead of renaming nothing.
+          built=$(docker compose -f docker-compose.yml exec -T db \
+            psql -At -U "$PGUSER_" -d "$PGDB_" -c "SELECT to_regnamespace('pettycash_test') IS NOT NULL")
+          if [ "$built" != "t" ]; then
+            echo "::error::01_schema_rebased.sql did not create pettycash_test, so there is nothing to"
+            echo "::error::rename to pettycashv3. tests/pg_harness.py BUILT_SCHEMA has changed."
+            exit 1
+          fi
+          docker compose -f docker-compose.yml exec -T db \
+            psql -v ON_ERROR_STOP=1 -U "$PGUSER_" -d "$PGDB_" \
+            -c "ALTER SCHEMA pettycash_test RENAME TO pettycashv3"
+
+      # A schema built from 01 alone has NO price catalogue and NO billing policy: `billing_plan`
+      # and `billing_policy` used to arrive only by migrating a legacy database
+      # (02_data_foundation_rebased.sql reads them out of `pettycashv2`, so it cannot seed an empty
+      # one) and nothing in any repo created them. Found by running this job on 2026-10-07, where
+      # a trial start never returned and the suite read as a 45s navigation timeout.
+      #
+      # seed_catalogue.sql is that catalogue, in git. It also carries the ONE currency row the
+      # plans' foreign key needs, and it runs BEFORE the services so e2e_seed.py finds HKD already
+      # there and leaves it alone - which matters, because the two used to disagree about the
+      # currency's symbol and the browser renders the difference.
+      - name: the catalogue, from seed_catalogue.sql
+        working-directory: ${{ env.STACK }}
+        run: |
+          docker compose -f docker-compose.yml exec -T db \
+            psql -v ON_ERROR_STOP=1 -U "$PGUSER_" -d "$PGDB_" < ../../docs/schema/seed_catalogue.sql
+
+      # Belt and braces: the seed above is idempotent and this says so out loud if it ever stops
+      # loading (a renamed file, a failed FK), instead of letting the suite time out downstream.
+      - name: the price catalogue is present
+        working-directory: ${{ env.STACK }}
+        run: |
+          counts=$(docker compose -f docker-compose.yml exec -T db \
+            psql -At -F' ' -U "$PGUSER_" -d "$PGDB_" \
+            -c "SELECT (SELECT count(*) FROM pettycashv3.billing_plan), (SELECT count(*) FROM pettycashv3.billing_policy)")
+          plans=${counts%% *}
+          policy=${counts##* }
+          echo "billing_plan=$plans billing_policy=$policy"
+          if [ "$plans" = "0" ] || [ "$policy" = "0" ]; then
+            echo "::error::billing_plan/billing_policy are still empty after seed_catalogue.sql ran, so"
+            echo "::error::no subscription journey can run: a trial start has no plan to start. Check that"
+            echo "::error::docs/schema/seed_catalogue.sql loaded (see Minty/docs/features/ci.md)."
+            exit 1
+          fi
+
+      - name: the rest of the stack
+        working-directory: ${{ env.STACK }}
+        run: docker compose -f docker-compose.yml up -d --build --wait
+
+      # The seed is idempotent and only ever touches rows it created. --print emits the env block
+      # the specs read; its E2E_MINTY_PASSWORD line is a placeholder, not a value, so it is
+      # dropped and the real one set above is kept.
+      - name: seed the test identities
+        working-directory: ${{ env.STACK }}
+        run: |
+          docker compose -f docker-compose.yml exec -T \
+            -e E2E_MINTY_PASSWORD="$E2E_MINTY_PASSWORD" \
+            minty python scripts/e2e_seed.py --print | tee "$RUNNER_TEMP/seed.out"
+          grep '^export E2E_' "$RUNNER_TEMP/seed.out" \
+            | grep -v '^export E2E_MINTY_PASSWORD=' \
+            | sed 's/^export //' >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ${{ inputs.suite }}/package-lock.json
+
+      - name: the suite's dependencies
+        working-directory: ${{ inputs.suite }}
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: e2e
+        working-directory: ${{ inputs.suite }}
+        env:
+          # The ports docker/stack publishes. localhost, never 127.0.0.1: minty-web's specs fail
+          # every CORS preflight on the latter.
+          E2E_PETTY_CASH_URL: http://localhost:8010
+          E2E_MINTY_WEB_URL: http://localhost:3000
+          E2E_SUBSCRIPTION_API_URL: http://localhost:8000
+          E2E_PAYMENT_REQUEST_WEB_URL: http://localhost:3020
+          E2E_PAYMENT_REQUEST_API_URL: http://localhost:8020
+          E2E_ONBOARDING_API_URL: http://localhost:8030
+        run: |
+          case "$SUITE" in
+            Minty) base=http://localhost:8010 ;;
+            minty-web) base=http://localhost:3000 ;;
+            minty-payment-request-web) base=http://localhost:3020 ;;
+          esac
+          export E2E_BASE_URL="$base"
+          if [ -n "$SPEC" ]; then
+            npm run test:e2e -- "$SPEC"
+          else
+            npm run test:e2e
+          fi
+
+      # A failed journey is read from the containers, not guessed at.
+      - name: the stack's logs
+        if: failure()
+        working-directory: ${{ env.STACK }}
+        run: docker compose -f docker-compose.yml logs --no-color --tail 400
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-${{ inputs.suite }}
+          path: |
+            ${{ inputs.suite }}/playwright-report
+            ${{ inputs.suite }}/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: down
+        if: always()
+        working-directory: ${{ env.STACK }}
+        run: docker compose -f docker-compose.yml down -v

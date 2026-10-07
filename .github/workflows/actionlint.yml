@@ -1,0 +1,20 @@
+# This repo's own check. Eight repos call the workflows next to this file, so a typo here is
+# eight red repos: actionlint parses every workflow and shell-checks every `run` block.
+#
+# The maintainer's own pinned image rather than a marketplace action - one less third party in
+# the chain for a repo every other repo trusts.
+name: actionlint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.7 -color

@@ -1,0 +1,64 @@
+# Minty (the Flask monolith): ruff and the whole pytest suite on Postgres.
+#
+# A file of its own rather than an input on python-api.yml, because almost nothing is shared:
+# Minty installs with uv (not pip), runs on Python 3.11 (not 3.13), has NO SQLite mode at all
+# (tests/pg_harness.py: Postgres is the only mode since phase C10), and runs under pytest-xdist
+# with one Postgres build per worker. It also needs no cross-repo checkout and no token - Minty
+# is the repo that HOLDS pg_harness.py and 01_schema_rebased.sql.
+#
+# Retires with Flask (modernisation plan, Part 3 step 7).
+#
+# Callers pin a tag, never @main:
+#   uses: minty-oliveandvine/.github/.github/workflows/flask-app.yml@v1
+name: flask-app
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: "Minty pins >=3.11,<3.12 in pyproject.toml."
+        type: string
+        default: "3.11"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      # uv through pip, exactly as Minty's own migrate.yml installs it - no third-party action
+      # for something one line of pip already does. --no-install-project is migrate.yml's too:
+      # the tests import from the repo root, so the project itself is never built. The dev group
+      # (ruff, pytest, pytest-xdist) comes with the sync.
+      - name: uv, then the dependencies
+        run: |
+          pip install uv
+          uv sync --frozen --no-install-project
+
+      - name: ruff
+        run: uv run ruff check .
+
+      # psql is how pg_harness.py runs the schema file; PG_BIN stops its Windows-shaped
+      # fallback (C:\Program Files\PostgreSQL\*\bin) from being reached at all.
+      - name: the psql client
+        run: sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: pytest (Postgres from 01_schema_rebased.sql)
+        env:
+          MINTY_TEST_PG_URI: postgresql://postgres:postgres@localhost:5432/postgres
+          # A database of its own per run; each xdist worker appends its own suffix.
+          MINTY_TEST_PG_DBNAME: ci_${{ github.run_id }}_${{ github.run_attempt }}
+          PG_BIN: /usr/bin
+        run: uv run pytest -n auto -q
