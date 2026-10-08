@@ -69,7 +69,7 @@ the tests' pre-import environment setup, the generator scripts' style) and the r
 
 | Input | Default | Notes |
 |---|---|---|
-| `node-version` | `22` | no repo pins `engines`, so this is where Node is chosen |
+| `node-version` | `24` | no repo pins `engines`, so this is where Node is chosen - 24 is what every Vercel project builds with |
 | `typecheck-script` | `typecheck` | the landing page calls it `type-check` |
 | `lint` | `true` | `false` only where lint debt would make a repo permanently red — a hole to close, not a setting |
 | `unit-tests` | `true` | `false` for the landing page, which has none |

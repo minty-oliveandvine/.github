@@ -16,9 +16,12 @@ on:
   workflow_call:
     inputs:
       node-version:
-        description: "No repo pins `engines`, so this is the one place Node is chosen."
+        description: >-
+          No repo pins `engines`, so this is the one place Node is chosen. 24 because that is what
+          every Vercel project builds with (and the newest Vercel offers): CI must compile on the
+          runtime production compiles on, or a green run proves nothing about the deploy.
         type: string
-        default: "22"
+        default: "24"
       typecheck-script:
         description: "`typecheck` everywhere except the landing page, which calls it `type-check`."
         type: string

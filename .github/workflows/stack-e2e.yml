@@ -219,7 +219,9 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          # Matches next-web.yml and every Vercel project: the specs run on the runtime the
+          # app is built with.
+          node-version: "24"
           cache: npm
           cache-dependency-path: ${{ inputs.suite }}/package-lock.json
 
