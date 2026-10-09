@@ -3,8 +3,19 @@
 # A file of its own rather than an input on python-api.yml, because almost nothing is shared:
 # Minty installs with uv (not pip), runs on Python 3.11 (not 3.13), has NO SQLite mode at all
 # (tests/pg_harness.py: Postgres is the only mode since phase C10), and runs under pytest-xdist
-# with one Postgres build per worker. It also needs no cross-repo checkout and no token - Minty
-# is the repo that HOLDS pg_harness.py and 01_schema_rebased.sql.
+# with one Postgres build per worker.
+#
+# It DOES need the three API repos beside it, which the first real run proved (2026-10-09):
+# tests/test_zz_schema_audit.py runs docs/schema/generators/audit_models.py across all four
+# repos and compares every model against the built schema, so with only Minty checked out it
+# reported "3 REPO(S) NOT FOUND" and exited 1. That audit is the thing that catches a mirror
+# drifting from 01_schema_rebased.sql, so skipping it would remove the point of the job.
+# It passes locally only because the repos are siblings in C:\Github - the exact class of bug
+# a first CI run exists to find.
+#
+# So everything is checked out as siblings UNDER the workspace: Minty at <workspace>/Minty and
+# each API beside it, which is the layout audit_models.py expects (MINTY_REPOS_ROOT, else the
+# parent of this checkout). No token: all four repos are public as of 2026-10-09.
 #
 # Retires with Flask (modernisation plan, Part 3 step 7).
 #
@@ -23,6 +34,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Everything runs inside the Minty checkout; the API repos sit beside it, unused except by
+    # the cross-repo schema audit.
+    defaults:
+      run:
+        working-directory: Minty
     services:
       postgres:
         image: postgres:15-alpine
@@ -33,6 +49,24 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: Minty
+
+      # Beside Minty, for tests/test_zz_schema_audit.py only. Public repos, so no token; a full
+      # checkout rather than a sparse one because the audit walks each repo's models and a
+      # sparse path list would rot the first time a model moved.
+      - uses: actions/checkout@v7
+        with:
+          repository: minty-oliveandvine/minty-subscription-api
+          path: minty-subscription-api
+      - uses: actions/checkout@v7
+        with:
+          repository: minty-oliveandvine/minty-payment-request-api
+          path: minty-payment-request-api
+      - uses: actions/checkout@v7
+        with:
+          repository: minty-oliveandvine/minty-onboarding-api
+          path: minty-onboarding-api
 
       - uses: actions/setup-python@v7
         with:
@@ -61,4 +95,8 @@ jobs:
           # A database of its own per run; each xdist worker appends its own suffix.
           MINTY_TEST_PG_DBNAME: ci_${{ github.run_id }}_${{ github.run_attempt }}
           PG_BIN: /usr/bin
+          # Where the four repos sit. audit_models.py would otherwise fall back to the parent of
+          # this checkout, which is the same folder here - set explicitly so the layout is a
+          # stated contract rather than a coincidence of the checkout path.
+          MINTY_REPOS_ROOT: ${{ github.workspace }}
         run: uv run pytest -n auto -q
