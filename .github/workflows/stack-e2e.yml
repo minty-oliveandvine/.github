@@ -36,9 +36,11 @@ on:
     secrets:
       STACK_READ_TOKEN:
         description: >-
-          Fine-grained PAT, read-only on contents, for the four private repos
-          (Minty, minty-subscription-api, minty-payment-request-api, minty-onboarding-api).
-        required: true
+          No longer used: every repo this job checks out is public as of 2026-10-09, so none of
+          the checkouts authenticates. Kept declared, and OPTIONAL, only so Minty's e2e.yml keeps
+          validating while it still passes it - a caller passing an undeclared secret is a hard
+          error. Drop it from that caller, then delete this block.
+        required: false
 
 jobs:
   stack:
@@ -79,7 +81,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/minty-subscription-api
-          token: ${{ secrets.STACK_READ_TOKEN }}
           ref: ${{ inputs.ref }}
           path: minty-subscription-api
 
@@ -87,7 +88,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/minty-payment-request-api
-          token: ${{ secrets.STACK_READ_TOKEN }}
           ref: ${{ inputs.ref }}
           path: minty-payment-request-api
 
@@ -95,7 +95,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/minty-onboarding-api
-          token: ${{ secrets.STACK_READ_TOKEN }}
           ref: ${{ inputs.ref }}
           path: minty-onboarding-api
 

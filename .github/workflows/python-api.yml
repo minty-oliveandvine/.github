@@ -25,8 +25,12 @@ on:
         default: ""
     secrets:
       MINTY_READ_TOKEN:
-        description: "Fine-grained PAT with read access to the contents of minty-oliveandvine/Minty."
-        required: true
+        description: >-
+          No longer used: minty-oliveandvine/Minty is public as of 2026-10-09, so the checkout
+          below authenticates with nothing. Kept declared, and OPTIONAL, only so the callers that
+          still pass it keep validating - a caller passing an undeclared secret is a hard error.
+          Drop it from the three API repos' ci.yml, then delete this block.
+        required: false
 
 jobs:
   test:
@@ -42,25 +46,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # An empty MINTY_READ_TOKEN fails the checkout below as an opaque git auth error - the
-      # only tell is that checkout stops echoing `token: ***` in its inputs. Say it plainly
-      # here instead, so the next expiry reads as what it is.
-      - name: the Minty read token is set
-        env:
-          MINTY_READ_TOKEN: ${{ secrets.MINTY_READ_TOKEN }}
-        run: |
-          if [ -z "$MINTY_READ_TOKEN" ]; then
-            echo "::error::MINTY_READ_TOKEN is empty or unset, so the private Minty checkout cannot authenticate."
-            echo "Add it under Settings > Secrets and variables > Actions: a fine-grained PAT with read access to minty-oliveandvine/Minty."
-            exit 1
-          fi
-
       # The Postgres test mode loads Minty/tests/pg_harness.py and builds the schema from
       # Minty/docs/schema/01_schema_rebased.sql - so Minty is checked out beside this repo.
+      # No token: Minty is public as of 2026-10-09, the same reason flask-app.yml needs none.
+      # There used to be a guard step here refusing an empty MINTY_READ_TOKEN; it was the first
+      # thing this workflow ever ran, and it failed every run because no API repo had the secret.
       - uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/Minty
-          token: ${{ secrets.MINTY_READ_TOKEN }}
           path: Minty
           sparse-checkout: |
             tests/pg_harness.py
