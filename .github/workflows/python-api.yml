@@ -40,7 +40,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # An empty MINTY_READ_TOKEN fails the checkout below as an opaque git auth error - the
       # only tell is that checkout stops echoing `token: ***` in its inputs. Say it plainly
@@ -57,7 +57,7 @@ jobs:
 
       # The Postgres test mode loads Minty/tests/pg_harness.py and builds the schema from
       # Minty/docs/schema/01_schema_rebased.sql - so Minty is checked out beside this repo.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/Minty
           token: ${{ secrets.MINTY_READ_TOKEN }}
@@ -67,7 +67,7 @@ jobs:
             docs/schema/01_schema_rebased.sql
           sparse-checkout-cone-mode: false
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ inputs.python-version }}
           cache: pip

@@ -71,12 +71,12 @@ jobs:
           esac
 
       - name: Minty (the caller's own ref)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           path: Minty
 
       - name: minty-subscription-api
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/minty-subscription-api
           token: ${{ secrets.STACK_READ_TOKEN }}
@@ -84,7 +84,7 @@ jobs:
           path: minty-subscription-api
 
       - name: minty-payment-request-api
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/minty-payment-request-api
           token: ${{ secrets.STACK_READ_TOKEN }}
@@ -92,7 +92,7 @@ jobs:
           path: minty-payment-request-api
 
       - name: minty-onboarding-api
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/minty-onboarding-api
           token: ${{ secrets.STACK_READ_TOKEN }}
@@ -100,21 +100,21 @@ jobs:
           path: minty-onboarding-api
 
       - name: minty-web
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/minty-web
           ref: ${{ inputs.ref }}
           path: minty-web
 
       - name: minty-payment-request-web
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/minty-payment-request-web
           ref: ${{ inputs.ref }}
           path: minty-payment-request-web
 
       - name: minty-onboarding-web
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/minty-onboarding-web
           ref: ${{ inputs.ref }}
@@ -217,7 +217,7 @@ jobs:
             | grep -v '^export E2E_MINTY_PASSWORD=' \
             | sed 's/^export //' >> "$GITHUB_ENV"
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           # Matches next-web.yml and every Vercel project: the specs run on the runtime the
           # app is built with.
@@ -261,7 +261,7 @@ jobs:
         working-directory: ${{ env.STACK }}
         run: docker compose -f docker-compose.yml logs --no-color --tail 400
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-${{ inputs.suite }}
