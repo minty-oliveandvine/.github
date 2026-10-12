@@ -58,7 +58,10 @@ TypeScript package appears, this becomes `ts-package.yml` here and both call it.
 
 The Postgres pass is the one that catches a `shared_models` mirror drifting from the real
 schema. It needs Minty checked out beside the caller, because all three repos' `conftest.py`
-load `Minty/tests/pg_harness.py` by path.
+load `Minty/tests/pg_harness.py` by path. Minty is checked out on the **caller's branch** (a PR's
+base, else the pushed branch), so `development` is tested against Minty's `development` schema;
+with no `ref` it took Minty's default branch, `main`, and an API that had moved with the schema
+went red.
 
 ### `flask-app.yml`
 

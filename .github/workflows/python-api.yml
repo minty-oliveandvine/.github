@@ -51,9 +51,13 @@ jobs:
       # No token: Minty is public as of 2026-10-09, the same reason flask-app.yml needs none.
       # There used to be a guard step here refusing an empty MINTY_READ_TOKEN; it was the first
       # thing this workflow ever ran, and it failed every run because no API repo had the secret.
+      # Minty's branch follows the caller's (a PR's base, else the pushed branch): with no ref the
+      # checkout took Minty's default branch, main, so an API on development was tested against a
+      # schema it had already moved past (payer_user_id NOT NULL, 2026-10-12).
       - uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/Minty
+          ref: ${{ github.base_ref || github.ref_name }}
           path: Minty
           sparse-checkout: |
             tests/pg_harness.py
