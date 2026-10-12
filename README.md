@@ -36,6 +36,15 @@ It is also the plan's own no-floating-pins rule for shared code.
 | `stack-e2e.yml` | Minty (`e2e.yml`) | the whole seven-service stack, the schema from `01_schema_rebased.sql`, the seed, then one repo's browser specs |
 | `actionlint.yml` | this repo | lints the four above |
 
+**Not here, deliberately: `minty-shared-ts`.** The shared TypeScript package (`@minty/shared`,
+created 2026-10-12) carries its own 20-line `ci.yml` instead of calling in. `next-web.yml` ends in
+`next build` and a library published as source has nothing to build, and a reusable workflow with
+exactly one caller is not shared CI - the reason this repo exists is that fixing CI for all of them
+is one change in one place, which needs an *all*. The same judgement the modernisation plan already
+makes for `py-package.yml`, deferred until `minty-db` / `minty-shared-py` exist. **The day a second
+TypeScript package appears, this becomes `ts-package.yml` here and both call it.** Written up in
+`Minty/docs/features/ci.md`.
+
 ### `python-api.yml`
 
 | Input | Required | Notes |
