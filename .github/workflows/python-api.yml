@@ -54,6 +54,7 @@ jobs:
       # Minty's branch follows the caller's (a PR's base, else the pushed branch): with no ref the
       # checkout took Minty's default branch, main, so an API on development was tested against a
       # schema it had already moved past (payer_user_id NOT NULL, 2026-10-12).
+      # The harness loads services/app_runtime/env.py by path (stdlib only), so it comes too.
       - uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/Minty
@@ -61,6 +62,7 @@ jobs:
           path: Minty
           sparse-checkout: |
             tests/pg_harness.py
+            services/app_runtime/env.py
             docs/schema/01_schema_rebased.sql
           sparse-checkout-cone-mode: false
 
