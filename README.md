@@ -34,7 +34,8 @@ It is also the plan's own no-floating-pins rule for shared code.
 | `flask-app.yml` | Minty | ruff; the whole pytest suite on Postgres under `-n auto` (Minty has no SQLite mode) |
 | `next-web.yml` | minty-web, minty-payment-request-web, minty-onboarding-web, daily-minty-landing-page | `npm ci`; typecheck; lint; unit tests; `next build`; Playwright only where the config starts its own server |
 | `stack-e2e.yml` | Minty (`e2e.yml`) | the whole seven-service stack, the schema from `01_schema_rebased.sql`, the seed, then one repo's browser specs |
-| `actionlint.yml` | this repo | lints the four above |
+| `vercel-preview-set.yml` | the four Next.js repos (`preview.yml`, its own file - never `ci.yml`, whose `check / check` name Vercel's production check is bound to) | branch preview SETS: aliases a branch's Vercel previews onto `pr-<branch>-<app>.dailyminty.com`, fills the set's other apps from their fallback build, keeps one comment on the PR, and removes the set when its last PR closes. Runs on `pull_request_target` (the base branch's copy - a PR cannot swap in its own workflow to read the secret), skips forks, needs only `VERCEL_TOKEN` (the repos are public, so `GITHUB_TOKEN` reads the other three); minty-infra `github.tf` writes it and the `PREVIEW_*` variables |
+| `actionlint.yml` | this repo | lints the five above |
 
 **Not here, deliberately: `minty-shared-ts`.** The shared TypeScript package (`@minty/shared`,
 created 2026-10-12) carries its own 20-line `ci.yml` instead of calling in. `next-web.yml` ends in

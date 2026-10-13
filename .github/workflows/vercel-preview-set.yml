@@ -1,0 +1,187 @@
+# Branch preview SETS for the four Next.js repos (owner's decision 2026-10-13).
+#
+# A pull request's branch `feat-x` gets one host per app - pr-feat-x-my, pr-feat-x-payment-request,
+# pr-feat-x-onboarding, pr-feat-x-www (.dailyminty.com) - and every member always exists: a repo
+# with an open pull request on `feat-x` serves that branch's Vercel preview there, a repo without
+# one serves its FALLBACK build (the deployment currently on that app's fallback host -
+# production's until the November launch, development's after; minty-infra writes the map).
+# Crossing apps stays in the set: the frontends rewrite sibling links at runtime
+# (@minty/shared/previewSibling) and Flask hands back into it (Minty
+# blueprints/shared/preview_origin.py). To preview a change that spans repos, give it the same
+# branch name in each.
+#
+#   pull_request_target opened/synchronize/reopened - wait for Vercel's preview of the head commit,
+#     alias it onto this app's set host, fill the set's other hosts from the fallbacks where that
+#     repo has no open pull request on the branch, and keep ONE comment on this pull request.
+#   pull_request_target closed - if another repo still has the branch open, put this app's host
+#     back on its fallback; otherwise remove the whole set. Then say so on the pull request.
+#
+# pull_request_target, never deployment_status or pull_request: it runs the BASE branch's copy of
+# the caller, so a pull request cannot swap in its own workflow to read VERCEL_TOKEN (security
+# review, 2026-10-13). It never checks out the pull request's code, and fork pull requests are
+# skipped outright. No GitHub token beyond the job's own: the four repos are public, so
+# GITHUB_TOKEN reads the other three, and the comment goes only on this repo's pull request.
+#
+# Callers pin a tag, never @main:
+#   uses: minty-oliveandvine/.github/.github/workflows/vercel-preview-set.yml@v1
+name: vercel-preview-set
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: "This repo's app in the set: my, payment-request, onboarding or www."
+        type: string
+        required: true
+      apps:
+        description: >-
+          JSON map of every app in the set to its repo, Vercel project and fallback host, written
+          by minty-infra (repo variable PREVIEW_APPS):
+          {"my": {"repo": "minty-web", "project": "prj_...", "fallback": "my.dailyminty.com"}, ...}
+        type: string
+        required: true
+      vercel-team-id:
+        description: "The Vercel team, by id (team_...) or slug (VERCEL_TEAM_ID)."
+        type: string
+        required: true
+      backend-label:
+        description: "Which APIs the previews use, for the comment (PREVIEW_BACKEND_LABEL)."
+        type: string
+        required: true
+    secrets:
+      vercel-token:
+        required: true
+
+concurrency:
+  group: preview-set-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    # This repo's own branches only: a fork's pull request never gets a set.
+    if: >-
+      github.event_name == 'pull_request_target'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 20
+    steps:
+      - name: Keep the set
+        env:
+          VERCEL_TOKEN: ${{ secrets.vercel-token }}
+          GH_TOKEN: ${{ github.token }}
+          TEAM: ${{ inputs.vercel-team-id }}
+          APP: ${{ inputs.app }}
+          APPS: ${{ inputs.apps }}
+          BACKEND_LABEL: ${{ inputs.backend-label }}
+          ACTION: ${{ github.event.action }}
+          OWNER: ${{ github.repository_owner }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          ZONE="dailyminty.com"
+          MARK="<!-- vercel-preview-set -->"
+          # Vercel names a team by id (`team_...`) or by slug, under different query keys.
+          if [[ $TEAM == team_* ]]; then TEAM_Q="teamId=$TEAM"; else TEAM_Q="slug=$TEAM"; fi
+
+          vercel() { # METHOD PATH [JSON] - fails loudly on anything but 2xx
+            local method=$1 path=$2 body=${3:-}
+            local sep="?"; [[ $path == *\?* ]] && sep="&"
+            curl -sS --fail-with-body -X "$method" \
+              -H "Authorization: Bearer $VERCEL_TOKEN" -H "Content-Type: application/json" \
+              ${body:+--data "$body"} "https://api.vercel.com${path}${sep}${TEAM_Q}"
+          }
+          slug_of() { # the set's name: lowercase [a-z0-9-], no edge hyphens, at most 40
+            local s
+            s=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+            s=${s:0:40}
+            printf '%s' "${s%%-}"
+          }
+          host_of() { printf 'pr-%s-%s.%s' "$1" "$2" "$ZONE"; }
+          field_of() { jq -r --arg a "$1" --arg f "$2" '.[$a][$f]' <<<"$APPS"; }
+          open_prs() { # APP - open pull requests on the branch in that app's repo (gh encodes the query)
+            gh api -X GET "repos/$OWNER/$(field_of "$1" repo)/pulls" -f state=open -f head="$OWNER:$BRANCH" --jq '.[].number'
+          }
+          alias_to() { # DEPLOYMENT_ID HOST
+            vercel POST "/v2/deployments/$1/aliases" "$(jq -nc --arg a "$2" '{alias: $a}')" >/dev/null
+            echo "aliased $2"
+          }
+          alias_fallback() { # APP
+            local id
+            id=$(vercel GET "/v13/deployments/$(field_of "$1" fallback)" | jq -r '.id')
+            alias_to "$id" "$(host_of "$SLUG" "$1")"
+          }
+          comment() { # BODY - the one marked comment on this pull request
+            local existing
+            existing=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq "map(select(.body | startswith(\"$MARK\"))) | .[0].id // empty")
+            if [[ -n $existing ]]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/$existing" -f body="$1" --silent
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$1" --silent
+            fi
+          }
+          set_table() { # which host serves a pull request's branch and which the fallback
+            local app line
+            # shellcheck disable=SC2016 # the backticks are Markdown, not a command substitution
+            printf '%s\n### Preview set `%s`\n\n| App | Host | Serving |\n|---|---|---|\n' "$MARK" "$SLUG"
+            for app in $(jq -r 'keys[]' <<<"$APPS"); do
+              if [[ $app == "$APP" || -n $(open_prs "$app") ]]; then line="this branch"; else line="fallback build"; fi
+              printf '| %s | https://%s | %s |\n' "$app" "$(host_of "$SLUG" "$app")" "$line"
+            done
+            printf '\nAPIs: **%s**. Opening a host needs the Vercel login.\n' "$BACKEND_LABEL"
+            # shellcheck disable=SC2016 # Markdown backticks
+            printf 'Sign in on the `my` host: everything opened from there - onboarding included - stays in this set.\n'
+          }
+
+          SLUG=$(slug_of "$BRANCH")
+          if [[ -z $SLUG || $BRANCH == main || $BRANCH == development ]]; then
+            echo "No set for branch '$BRANCH'."; exit 0
+          fi
+
+          if [[ $ACTION == closed ]]; then
+            still_open=""
+            for other in $(jq -r --arg a "$APP" 'keys[] | select(. != $a)' <<<"$APPS"); do
+              [[ -z $(open_prs "$other") ]] || still_open=yes
+            done
+            if [[ -n $still_open ]]; then
+              alias_fallback "$APP"
+              exit 0
+            fi
+            for app in $(jq -r 'keys[]' <<<"$APPS"); do
+              host=$(host_of "$SLUG" "$app")
+              code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+                -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v2/aliases/$host?$TEAM_Q")
+              case $code in 2??|404) echo "removed $host ($code)";; *) echo "::error::DELETE $host answered $code"; exit 1;; esac
+            done
+            # shellcheck disable=SC2016 # Markdown backticks again
+            comment "$(printf '%s\n### Preview set `%s` removed\n\nNo open pull request uses this branch any more.\n' "$MARK" "$SLUG")"
+            exit 0
+          fi
+
+          # Vercel builds the head commit on its own; wait for it (up to ~15 minutes).
+          PROJECT=$(field_of "$APP" project)
+          ID=""
+          for _ in $(seq 1 45); do
+            found=$(vercel GET "/v6/deployments?projectId=$PROJECT&sha=$SHA&limit=1" | jq -c '.deployments[0] // empty')
+            state=$(jq -r '.state // .readyState // empty' <<<"$found")
+            case $state in
+              READY) ID=$(jq -r '.uid' <<<"$found"); break ;;
+              ERROR|CANCELED) echo "::error::Vercel's preview of $SHA is $state."; exit 1 ;;
+            esac
+            sleep 20
+          done
+          [[ -n $ID ]] || { echo "::error::No READY Vercel preview of $SHA after 15 minutes."; exit 1; }
+
+          # A newer push started its own run (and cancelled this one if it was still waiting).
+          head=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')
+          [[ $head == "$SHA" ]] || { echo "$SHA is no longer the head; the newer run aliases it."; exit 0; }
+
+          alias_to "$ID" "$(host_of "$SLUG" "$APP")"
+          for other in $(jq -r --arg a "$APP" 'keys[] | select(. != $a)' <<<"$APPS"); do
+            # A repo with its own pull request on the branch aliases its own build; never put a
+            # fallback over it.
+            if [[ -n $(open_prs "$other") ]]; then echo "$other has its own pull request"; else alias_fallback "$other"; fi
+          done
+          comment "$(set_table)"
