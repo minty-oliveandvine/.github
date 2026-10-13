@@ -130,7 +130,7 @@ jobs:
               if [[ $app == "$APP" || -n $(open_prs "$app") ]]; then line="this branch"; else line="fallback build"; fi
               printf '| %s | https://%s | %s |\n' "$app" "$(host_of "$SLUG" "$app")" "$line"
             done
-            printf '\nAPIs: **%s**. Opening a host needs the Vercel login.\n' "$BACKEND_LABEL"
+            printf '\nAPIs: **%s**. Anyone with a link can open a host; Minty still asks them to sign in.\n' "$BACKEND_LABEL"
             # shellcheck disable=SC2016 # Markdown backticks
             printf 'Sign in on the `my` host: everything opened from there - onboarding included - stays in this set.\n'
           }
