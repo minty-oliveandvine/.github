@@ -136,7 +136,7 @@ jobs:
           }
 
           SLUG=$(slug_of "$BRANCH")
-          if [[ -z $SLUG || $BRANCH == main || $BRANCH == development ]]; then
+          if [[ -z $SLUG || $BRANCH == main || $BRANCH == development || $BRANCH == redesign ]]; then
             echo "No set for branch '$BRANCH'."; exit 0
           fi
 

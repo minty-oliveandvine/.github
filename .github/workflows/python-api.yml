@@ -54,11 +54,27 @@ jobs:
       # Minty's branch follows the caller's (a PR's base, else the pushed branch): with no ref the
       # checkout took Minty's default branch, main, so an API on development was tested against a
       # schema it had already moved past (payer_user_id NOT NULL, 2026-10-12).
+      # A branch Minty does not have (the app repos' `redesign`, 2026-10-28) takes Minty's main.
       # The harness loads services/app_runtime/env.py by path (stdlib only), so it comes too.
+      - name: Minty branch
+        id: minty
+        env:
+          WANT: ${{ github.base_ref || github.ref_name }}
+        run: |
+          set +e
+          git ls-remote --exit-code --heads https://github.com/minty-oliveandvine/Minty.git "refs/heads/$WANT" >/dev/null
+          rc=$?
+          set -e
+          case $rc in
+            0) ref=$WANT ;;
+            2) ref=main; echo "Minty has no branch '$WANT'; using main." ;;
+            *) echo "::error::git ls-remote on Minty failed (exit $rc)"; exit 1 ;;
+          esac
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: minty-oliveandvine/Minty
-          ref: ${{ github.base_ref || github.ref_name }}
+          ref: ${{ steps.minty.outputs.ref }}
           path: Minty
           sparse-checkout: |
             tests/pg_harness.py
