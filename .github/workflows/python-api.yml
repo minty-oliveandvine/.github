@@ -3,8 +3,11 @@
 # match the real schema?). Lifted from minty-subscription-api's day-one workflow, which is where
 # both passes were worked out.
 #
-# The repos' conftest.py files are byte-identical: with MINTY_TEST_PG_URI set they load
-# Minty/tests/pg_harness.py by path from MINTY_REPO, so Minty is checked out beside the caller.
+# The Postgres pass builds its database from the schema file. A branch that pins minty-db
+# (requirements.txt: `minty-db @ ...`; every API's main/development since 2026-11-03) gets it from
+# that package (minty_db.testing.pg) and needs no Minty checkout. Any other branch (the APIs'
+# `redesign`) still loads Minty/tests/pg_harness.py by path from MINTY_REPO, so Minty is checked
+# out beside it - only for those.
 #
 # Callers pin a tag, never @main:
 #   uses: minty-oliveandvine/.github/.github/workflows/python-api.yml@v1
@@ -46,7 +49,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The Postgres test mode loads Minty/tests/pg_harness.py and builds the schema from
+      # Where the test database comes from: minty-db when the branch pins it, else Minty's harness.
+      - name: Test database source
+        id: harness
+        run: |
+          if grep -qE '^minty-db @ ' requirements.txt; then
+            echo "from=minty-db" >> "$GITHUB_OUTPUT"
+            echo "requirements.txt pins minty-db: the test database comes from it; no Minty checkout."
+          else
+            echo "from=minty" >> "$GITHUB_OUTPUT"
+            echo "No minty-db pin: Minty is checked out for tests/pg_harness.py."
+          fi
+
+      # The Postgres test mode (without minty-db) loads Minty/tests/pg_harness.py and builds the schema from
       # Minty/docs/schema/01_schema_rebased.sql - so Minty is checked out beside this repo.
       # No token: Minty is public as of 2026-10-09, the same reason flask-app.yml needs none.
       # There used to be a guard step here refusing an empty MINTY_READ_TOKEN; it was the first
@@ -58,6 +73,7 @@ jobs:
       # The harness loads services/app_runtime/env.py by path (stdlib only), so it comes too.
       - name: Minty branch
         id: minty
+        if: steps.harness.outputs.from == 'minty'
         env:
           WANT: ${{ github.base_ref || github.ref_name }}
         run: |
@@ -72,6 +88,7 @@ jobs:
           esac
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
+        if: steps.harness.outputs.from == 'minty'
         with:
           repository: minty-oliveandvine/Minty
           ref: ${{ steps.minty.outputs.ref }}
