@@ -133,6 +133,17 @@ jobs:
           ref: ${{ inputs.ref }}
           path: minty-onboarding-web
 
+      # The suite's specs run from a SECOND checkout of the same commit. The stack mounts its own
+      # checkout (above) into the app's container with a volume on /app/node_modules, so Docker
+      # creates a root-owned node_modules there and the runner's `npm ci` could not write it
+      # (EACCES, the first run of 2026-11-09).
+      - name: the suite's specs
+        uses: actions/checkout@v7
+        with:
+          repository: minty-oliveandvine/${{ inputs.suite }}
+          ref: ${{ inputs.ref }}
+          path: specs/${{ inputs.suite }}
+
       # Every value is a per-run throwaway or a placeholder. SECRET_KEY only has to be the SAME
       # everywhere (accounts-api mints the hand-off JWTs, the other APIs verify them with it),
       # never the real one. accounts-api refuses to start without a Xero client and a sender:
@@ -237,16 +248,16 @@ jobs:
           # app is built with.
           node-version: "24"
           cache: npm
-          cache-dependency-path: ${{ inputs.suite }}/package-lock.json
+          cache-dependency-path: specs/${{ inputs.suite }}/package-lock.json
 
       - name: the suite's dependencies
-        working-directory: ${{ inputs.suite }}
+        working-directory: specs/${{ inputs.suite }}
         run: |
           npm ci
           npx playwright install --with-deps chromium
 
       - name: e2e
-        working-directory: ${{ inputs.suite }}
+        working-directory: specs/${{ inputs.suite }}
         env:
           # The ports docker/stack publishes. localhost, never 127.0.0.1: minty-web's specs fail
           # every CORS preflight on the latter.
@@ -282,8 +293,8 @@ jobs:
         with:
           name: playwright-${{ inputs.suite }}
           path: |
-            ${{ inputs.suite }}/playwright-report
-            ${{ inputs.suite }}/test-results
+            specs/${{ inputs.suite }}/playwright-report
+            specs/${{ inputs.suite }}/test-results
           if-no-files-found: ignore
           retention-days: 7
 
