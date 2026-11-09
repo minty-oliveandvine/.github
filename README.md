@@ -33,7 +33,7 @@ It is also the plan's own no-floating-pins rule for shared code.
 | `python-api.yml` | minty-subscription-api, minty-payment-request-api, minty-onboarding-api | ruff; pytest on SQLite; pytest again on a Postgres built from Minty's `01_schema_rebased.sql` |
 | `flask-app.yml` | Minty | ruff; the whole pytest suite on Postgres under `-n auto` (Minty has no SQLite mode) |
 | `next-web.yml` | minty-web, minty-payment-request-web, minty-onboarding-web, daily-minty-landing-page | `npm ci`; typecheck; lint; unit tests; `next build`; Playwright only where the config starts its own server |
-| `stack-e2e.yml` | Minty (`e2e.yml`) | the whole seven-service stack, the schema from `01_schema_rebased.sql`, the seed, then one repo's browser specs |
+| `stack-e2e.yml` | minty-accounts-api (`e2e.yml`) | the whole seven-service stack (`docker/stack` in minty-accounts-api), the schema from minty-db, the seed, then one repo's browser specs |
 | `vercel-preview-set.yml` | the four Next.js repos (`preview.yml`, its own file - never `ci.yml`, whose `check / check` name Vercel's production check is bound to) | branch preview SETS: aliases a branch's Vercel previews onto `pr-<branch>-<app>.dailyminty.com`, fills the set's other apps from their fallback build, keeps one comment on the PR, and removes the set when its last PR closes. Runs on `pull_request_target` (the base branch's copy - a PR cannot swap in its own workflow to read the secret), skips forks, needs only `VERCEL_TOKEN` (the repos are public, so `GITHUB_TOKEN` reads the other three); minty-infra `github.tf` writes it and the `PREVIEW_*` variables |
 | `actionlint.yml` | this repo | lints the five above |
 
@@ -94,20 +94,21 @@ the tests' pre-import environment setup, the generator scripts' style) and the r
 
 | Input | Default | Notes |
 |---|---|---|
-| `suite` | required | `Minty`, `minty-web` or `minty-payment-request-web` |
-| `ref` | `development` | the branch of the other six repos; Minty uses the caller's ref |
+| `suite` | required | `minty-web` or `minty-payment-request-web` (`Minty` is refused: it has no suite) |
+| `ref` | `development` | the branch of the other six repos; minty-accounts-api uses the caller's commit when it is the caller, else `ref` |
 | `spec` | — | an optional Playwright filter |
 
 | Secret | Notes |
 |---|---|
-| `STACK_READ_TOKEN` | fine-grained PAT, read on contents of the four private repos |
+| `STACK_READ_TOKEN` | unused and optional (every repo it checks out is public); declared only while Minty's old `e2e.yml` still passes it |
 
 **No production secret is needed.** `SECRET_KEY` is generated per run (it only has to be the
-same for every service), `S3_URL` falls back to compose's dummy, Stripe and SMTP stay unset, and
-`E2E_XERO` stays off — so no run reaches a real Xero org or a real mailbox.
+same for every service), the Xero client and `INVITE_FROM` are placeholders, `S3_URL` falls back
+to compose's dummy, Stripe and SMTP stay unset, and `E2E_XERO` stays off — so no run reaches a
+real Xero org or a real mailbox. Minty (private since 2026-11-06) is never checked out.
 
 `minty-onboarding-web` is refused with a reason: its `walk`/`resume` specs need a disposable
-entity in `onboarding` status that `scripts/e2e_seed.py` does not create yet.
+entity in `onboarding` status that minty-accounts-api's `scripts/e2e_seed.py` does not create yet.
 
 ## Where a check is switched off, and why
 
